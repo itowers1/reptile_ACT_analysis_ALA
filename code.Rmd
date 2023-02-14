@@ -1,0 +1,121 @@
+---
+title: "Reptile Analysis ACT"
+author: "Isaac Towers"
+date: "2023-02-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This document will analyse the spatial distribution of reptile species richness across ACT. It involves loading packages, accessing and loading data for reptile occurrences from the Atlas of Living Australia (ALA) and spatial analysis tools for rasterising and summarising occurrences records as species richnes per grid cell.
+
+First, start by loading some packages.
+
+
+#add thing about installing and loading
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(geodata)
+```
+
+Bring in climate data
+
+```{r}
+precipitation_data_monthly <- geodata::worldclim_country("Australia", "prec", "data",res = 2.5) 
+precipitation_data_annual <- terra::app(precipitation_data_monthly, fun = sum)
+```
+
+Bring in the map of the Australian Capital Territory (ACT). This will be the boundary polygon for the analysis. We start with the `States and Territories - 2021 - Shapefile` available from the ABS, and subset this spatial vector to just the ACT. Before that occurs, we need to define a coordinate reference system (CRS), this CRS will be used consistently throughout to ensure that all of our spatial information is lining up properly.
+
+```{r}
+target_CRS = crs(precipitation_data_annual)
+target_res = res(precipitation_data_annual)
+```
+
+```{r}
+australia <- terra::vect("data/STE_2021_AUST_SHP_GDA2020/STE_2021_AUST_GDA2020.shp", crs=target_CRS)
+ACT <- terra::subset(australia, australia$STE_NAME21 == "Australian Capital Territory")
+```
+
+```{r}
+precipitation_data_annual_ACT <- terra::crop(precipitation_data_annual, ACT, mask = TRUE)
+
+terra::plot(precipitation_data_annual_ACT)
+```
+
+
+Read in the occurrence data for reptiles. This data was obtained from XX
+```{r}
+occurrence_data <- read_csv("data/occurrence_data/records-2023-02-14.csv")
+```
+
+What variables do we have available?
+```{r}
+names(occurrence_data) %>%
+  sort()
+```
+
+Have a look at the available data. Because this analysis is focussed on species richness throughout the entire period of observations, the only information that we will need is the taxon names, and some way to georeference these taxon names, so that we can obtain a list of the unique taxa occurring in a given location. Based on the `headings.csv` file in `data\`, we will extract `decimalLongitude`, `decimalLatitude` and `species`. Let's also grab `family` for a follow-up analysis.
+
+```{r}
+occurrence_data %>%
+  select(decimalLatitude, decimalLongitude, species, family) -> occurrence_data_species_family
+```
+
+Now, let's calculate species richness. The scale that we calculate species richness will correspond in this case with the resolution of the climate data. This makes sense if the goal of our analysis is to calculate how species richness varies with broad-scale climate predictors such as MAP, as in this case. To do this we, can use the `extract` function in the `terra` package. 
+
+```{r}
+occurrence_data_species_family_vect <- terra::vect(occurrence_data_species_family, geom = c("decimalLongitude","decimalLatitude"), crs = target_CRS)
+
+terra::plot(ACT)
+terra::points(occurrence_data_species_family_vect)
+```
+
+```{r}
+terra::extract(precipitation_data_annual_ACT, occurrence_data_species_family_vect, cells = TRUE, ID = FALSE, bind = TRUE)-> richness
+
+richness %>% as.data.frame()
+
+terra::plot(ACT)
+
+```
+
+```{r}
+richness_raster<-terra::rast(resolution=target_res, 
+            ext(ACT), # extent
+            crs=target_CRS, # CRS used by leaflet
+            vals=NA) # make it empty
+```
+
+
+```{r}
+species_richnes_raster <- terra::rasterize(richness, richness_raster, field = "species", fun = n_distinct)
+```
+
+```{r}
+species_richness_ACT <- terra::crop(species_richnes_raster, ACT, mask = TRUE)
+terra::plot(species_richness_ACT)
+terra::lines(ACT)
+```
+
+```{r}
+family_richness_raster <- terra::rasterize(richness, richness_raster, field = "family", fun = n_distinct)
+```
+
+```{r}
+family_richness_ACT <- terra::crop(family_richness_raster, ACT, mask = TRUE)
+terra::plot(family_richness_ACT)
+terra::lines(ACT, add = T)
+```
+
+```{r}
+tibble(species_richess = terra::values(species_richness_ACT),
+       family_richess = terra::values(family_richness_ACT),
+       precipitation = terra::values(precipitation_data_annual_ACT))
+```
+
+
+
