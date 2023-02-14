@@ -2,86 +2,117 @@
 title: "Reptile Analysis ACT"
 author: "Isaac Towers"
 date: "2023-02-14"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-This document will analyse the spatial distribution of reptile species richness across ACT. It involves loading packages, accessing and loading data for reptile occurrences from the Atlas of Living Australia (ALA) and spatial analysis tools for rasterising and summarising occurrences records as species richnes per grid cell.
+##Introduction
+
+This document was put together to analyse spatial variation in the species and family richness of reptiles across ACT in response to mean annual precipitation. It involves loading packages, accessing and loading data for reptile occurrences from the Atlas of Living Australia (ALA) and spatial analysis tools for rasterising and summarising occurrences records as species richness per grid cell.
+
+```{r include=FALSE}
+rm(list = ls())
+```
+
+##Loading
+###Load packages
 
 First, start by loading some packages.
 
+```{r include=FALSE}
+list.of.packages <- c("ggplot2", "tidyverse", "terra","geodata","formatR")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
 
-#add thing about installing and loading
-```{r}
 library(ggplot2)
 library(tidyverse)
 library(geodata)
+library(terra)
+library(formatR)
+
 ```
 
-Bring in climate data
+###Load climate data and map of ACT
 
-```{r}
+Bring in climate data. We will use the `Worldclim 2.1` data, which we can obtain using the geodata package. We'll use a moderate resolution as this is just an example.
+
+```{r, tidy=TRUE}
 precipitation_data_monthly <- geodata::worldclim_country("Australia", "prec", "data",res = 2.5) 
 precipitation_data_annual <- terra::app(precipitation_data_monthly, fun = sum)
 ```
 
-Bring in the map of the Australian Capital Territory (ACT). This will be the boundary polygon for the analysis. We start with the `States and Territories - 2021 - Shapefile` available from the ABS, and subset this spatial vector to just the ACT. Before that occurs, we need to define a coordinate reference system (CRS), this CRS will be used consistently throughout to ensure that all of our spatial information is lining up properly.
+Bring in the map of the Australian Capital Territory (ACT). This will be the boundary polygon for the analysis. We start with the `States and Territories - 2021 - Shapefile` available from the ABS (https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/digital-boundary-files), and subset this spatial vector to just the ACT. Before that occurs, we need to define a coordinate reference system (CRS), this CRS will be used consistently throughout to ensure that all of our spatial information is lining up properly. We'll base the target CRS and resolution on the climate data.
 
 ```{r}
 target_CRS = crs(precipitation_data_annual)
 target_res = res(precipitation_data_annual)
 ```
 
-```{r}
+```{r, tidy=TRUE}
 australia <- terra::vect("data/STE_2021_AUST_SHP_GDA2020/STE_2021_AUST_GDA2020.shp", crs=target_CRS)
 ACT <- terra::subset(australia, australia$STE_NAME21 == "Australian Capital Territory")
 ```
 
-```{r}
-precipitation_data_annual_ACT <- terra::crop(precipitation_data_annual, ACT, mask = TRUE)
+Crop and mask the climate data to correspond to the boundary of ACT.
 
-terra::plot(precipitation_data_annual_ACT)
+```{r, tidy=TRUE}
+precipitation_data_annual_ACT <- terra::crop(precipitation_data_annual, ACT, mask = TRUE)
 ```
 
+Let's just quickly inspect the climate data. In ACT, rainfall is greatest in the west with greater elevation, and declines towards the coast. 
 
-Read in the occurrence data for reptiles. This data was obtained from XX
+```{r}
+terra::plot(precipitation_data_annual_ACT)
+terra::lines(ACT)
+```
+
+###Load occurrence data
+
+Read in the occurrence data for reptiles. This data was obtained from ALA (https://biocache.ala.org.au/occurrences/search?q=lsid%3Ahttps%3A%2F%2Fbiodiversity.org.au%2Fafd%2Ftaxa%2F682e1228-5b3c-45ff-833b-550efd40c399&qualityProfile=ALA&fq=state%3A%22Australian+Capital+Territory%22).
+
 ```{r}
 occurrence_data <- read_csv("data/occurrence_data/records-2023-02-14.csv")
 ```
 
 What variables do we have available?
-```{r}
+```{r include=FALSE}
 names(occurrence_data) %>%
   sort()
 ```
 
-Have a look at the available data. Because this analysis is focussed on species richness throughout the entire period of observations, the only information that we will need is the taxon names, and some way to georeference these taxon names, so that we can obtain a list of the unique taxa occurring in a given location. Based on the `headings.csv` file in `data\`, we will extract `decimalLongitude`, `decimalLatitude` and `species`. Let's also grab `family` for a follow-up analysis.
+Have a look at the available data. Because this analysis is focussed on species richness throughout the entire period of observations, the only information that we will need is the taxon names, and some way to georeference these taxon names, so that we can obtain a list of the unique taxa occurring in a given location. Based on the `headings.csv` file in `~data\`, we will extract `decimalLongitude`, `decimalLatitude` and `species`. Let's also grab `family` for a follow-up analysis.
 
-```{r}
+```{r, tidy=TRUE}
 occurrence_data %>%
   select(decimalLatitude, decimalLongitude, species, family) -> occurrence_data_species_family
 ```
 
-Now, let's calculate species richness. The scale that we calculate species richness will correspond in this case with the resolution of the climate data. This makes sense if the goal of our analysis is to calculate how species richness varies with broad-scale climate predictors such as MAP, as in this case. To do this we, can use the `extract` function in the `terra` package. 
+Now, let's calculate species richness. The scale that we calculate species richness will correspond in this case with the resolution of the climate data. This makes sense if the goal of our analysis is to calculate how species richness varies with broad-scale climate predictors such as MAP, as in this case. To do this we, we first need to convert the occurrence data in to a `SpatVector` using the `terra` package. We can view the distribution of occurrences across the ACT. The greater number of observations are located in the north.
 
-```{r}
+##Conversion and extraction
+###Convert occurrence to SpatVector
+
+```{r, tidy=TRUE}
 occurrence_data_species_family_vect <- terra::vect(occurrence_data_species_family, geom = c("decimalLongitude","decimalLatitude"), crs = target_CRS)
 
 terra::plot(ACT)
 terra::points(occurrence_data_species_family_vect)
 ```
 
-```{r}
-terra::extract(precipitation_data_annual_ACT, occurrence_data_species_family_vect, cells = TRUE, ID = FALSE, bind = TRUE)-> richness
+###Extract values
 
-richness %>% as.data.frame()
+Ok, with our spatial vector we can now extract the precipitation values associated with each observation. Observations which are nearby each other will have the same precipitation value due to the grid-based dataset.
 
-terra::plot(ACT)
-
+```{r, tidy=TRUE}
+terra::extract(precipitation_data_annual_ACT, occurrence_data_species_family_vect, cells = TRUE, ID = FALSE, bind = TRUE)-> precipitation_per_observation
 ```
+
+We now initialise an empty raster layer, using the resolution and crs of the climate data, and the extent of the ACT. We set all values to NA, as these will now hold richness estimates. 
 
 ```{r}
 richness_raster<-terra::rast(resolution=target_res, 
@@ -90,32 +121,50 @@ richness_raster<-terra::rast(resolution=target_res,
             vals=NA) # make it empty
 ```
 
+Using `rasterize`, we group nearby observations into a single value per grid cell by some summarizing function. In this case, it is the number of distinct species or families, or the median value of precipitation (remember, there is only one precipitation value per grid cell) which we achieve using `n_distinct`.
 
-```{r}
-species_richnes_raster <- terra::rasterize(richness, richness_raster, field = "species", fun = n_distinct)
+```{r, tidy=TRUE}
+species_richness_raster <- terra::rasterize(precipitation_per_observation, richness_raster, field = "species", fun = n_distinct)
 ```
 
 ```{r}
-species_richness_ACT <- terra::crop(species_richnes_raster, ACT, mask = TRUE)
-terra::plot(species_richness_ACT)
-terra::lines(ACT)
+family_richness_raster <- terra::rasterize(precipitation_per_observation, richness_raster, field = "family", fun = n_distinct)
 ```
+
+```{r, tidy=TRUE}
+precipitation_raster <- terra::rasterize(precipitation_per_observation, richness_raster, field = "sum", fun = median)
+```
+
+Stack the raster plots so that we can plot easily
+
+```{r, tidy=TRUE}
+terra::rast(list(`Species Richness` = species_richness_raster, `Family Richness` = family_richness_raster, `MAP (mm/yr)` =  precipitation_raster)) -> output_data
+```
+
+##Plotting of results
+
+Ok, lets have a look at the plotted maps. At a pinch, it seems that richness is greater towards the north, where precipitation is lowest. Is there a relationship there?
 
 ```{r}
-family_richness_raster <- terra::rasterize(richness, richness_raster, field = "family", fun = n_distinct)
+terra::plot(output_data)
 ```
 
-```{r}
-family_richness_ACT <- terra::crop(family_richness_raster, ACT, mask = TRUE)
-terra::plot(family_richness_ACT)
-terra::lines(ACT, add = T)
+We can be a bit more sure statistically by extracting the data for each grid cell, and plotting it using a scatter plot. A **very** simple analysis indicates that indeed this may be the case, with lower family and species richness at higher MAP values. This trend is roughly equivalent at both taxonomic scales, although of course the intercept value is much lower for family richness.
+
+```{r, tidy=TRUE}
+output_data %>%
+  as_tibble() %>%
+  drop_na() %>%
+  pivot_longer(cols = c(`Species Richness`, `Family Richness`), names_to = "taxonomic_scale", values_to = "richness") %>%
+  ggplot(aes(x = `MAP (mm/yr)`, y = richness)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_wrap(~taxonomic_scale) +
+  theme_classic() +
+  labs(x = "MAP (mm/yr)", y = "Richness") + 
+  theme(text = element_text(size = 16))
 ```
 
-```{r}
-tibble(species_richess = terra::values(species_richness_ACT),
-       family_richess = terra::values(family_richness_ACT),
-       precipitation = terra::values(precipitation_data_annual_ACT))
-```
+##Conclusion
 
-
-
+There is a lot more that could be done to follow up on this analysis from both a mapping and statisical point of view. For example, the richness data is clearly poisson-distributed, and needs to be treated as such in follow-up work. In addition, we have disregarded cells where there were no observations as NA. This may be somewhat appropriate, because it is more likely that there have not been any observations made in this area, than it is that there are simply no reptiles. Along these lines, we also have a spatially autocorrelated residuals in this analysis, which could be dealt with using an appropriate mixed-effects model. 
